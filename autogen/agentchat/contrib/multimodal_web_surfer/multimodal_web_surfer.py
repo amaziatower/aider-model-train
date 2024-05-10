@@ -16,6 +16,7 @@ from .... import Agent, ConversableAgent, OpenAIWrapper
 from ....runtime_logging import logging_enabled, log_event
 from ....code_utils import content_str
 from .state_of_mark import add_state_of_mark
+from .learning import Learning
 
 try:
     from termcolor import colored
@@ -71,6 +72,7 @@ class MultimodalWebSurferAgent(ConversableAgent):
         browser_data_dir: Optional[str] = None,
         start_page: Optional[str] = None,
         debug_dir: Optional[str] = None,
+        learn: Optional[bool] = False,
     ):
         """
         Create a new MultimodalWebSurferAgent.
@@ -91,6 +93,7 @@ class MultimodalWebSurferAgent(ConversableAgent):
             browser_data_dir: The Chromium data directory. If None, a new context is created.
             start_page: The start page for the browser.
             debug_dir: The directory to store debug information. TODO: Clarify behavior on None.
+            learn: Whether to enable learning.
         """
         super().__init__(
             name=name,
@@ -108,6 +111,7 @@ class MultimodalWebSurferAgent(ConversableAgent):
         # self._mlm_client = OpenAIWrapper(**self._mlm_config)
         self.start_page = start_page or self.DEFAULT_START_PAGE
         self.debug_dir = debug_dir or os.getcwd()
+        self.learn = learn
 
         # Create the playwright instance
         launch_args = {"headless": headless}
@@ -211,6 +215,10 @@ setInterval(function() {{
             self._page.screenshot(path=os.path.join(self.debug_dir, "screenshot.png"))
             print(f"Multimodal Web Surfer debug screens: {pathlib.Path(os.path.abspath(debug_html)).as_uri()}\n")
 
+        if self.learn:
+            # Create the learning component
+            self.learning = Learning()
+
         self._reply_func_list = []
         self.register_reply([Agent, None], MultimodalWebSurferAgent.generate_surfer_reply)
         self.register_reply([Agent, None], ConversableAgent.generate_code_execution_reply)
@@ -309,6 +317,10 @@ ARGUMENT: <The action' argument, if any. For example, the text to type if the ac
         som_screenshot.close()
         if self.debug_dir:
             scaled_screenshot.save(os.path.join(self.debug_dir, "screenshot_scaled.png"))
+
+        if self.learn:
+            # Let the learning component include any advice retrieved from memory
+            text_prompt = self.learning.include_advice(text_prompt)
 
         # Add the multimodal message and make the request
         history.append(self._make_mm_message(text_prompt, scaled_screenshot))
@@ -433,6 +445,11 @@ ARGUMENT: <The action' argument, if any. For example, the text to type if the ac
                 percent_visible=percent_visible,
                 percent_scrolled=percent_scrolled,
             )
+
+        if self.learn:
+            # Let the learning component update memory
+            self.learning.update_memory()
+
         # Return the complete observation
         return True, self._make_mm_message(
             f"{action_description} Here is a screenshot of [{self._page.title()}]({self._page.url}). The viewport shows {percent_visible}% of the webpage, and is positioned {position_text}.".strip(),
